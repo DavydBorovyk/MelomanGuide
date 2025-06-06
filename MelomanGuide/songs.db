@@ -1,0 +1,6 @@
+CREATE TABLE Songs (
+    Id INTEGER PRIMARY KEY AUTOINCREMENT,
+    Title TEXT NOT NULL,
+    Artist TEXT NOT NULL,
+    Album TEXT
+);
