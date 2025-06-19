@@ -3,63 +3,45 @@ using System.Collections.Generic;
 using System.Data.SQLite;
 using System.Drawing;
 using System.IO;
+using System.Linq;
 using System.Net.Http;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 using Newtonsoft.Json.Linq;
 using Excel = Microsoft.Office.Interop.Excel;
-using System.Linq;
 
 namespace MelomanGuide
 {
-  
-    /// Основна форма застосунку для пошуку музики та управління улюбленими піснями.
     public partial class Form1 : Form
     {
-        /// Шлях до локальної бази даних.
         private string dbPath = "songs.db";
+        private string savePath = Path.Combine(Application.StartupPath, "loved_songs.txt");
+        private string connStr => $"Data Source={dbPath};Version=3;";
 
-        /// Шлях до файлу збереження улюблених пісень.
-        string savePath = Path.Combine(Application.StartupPath, "loved_songs.txt");
+        private List<Song> currentSearchResults = new List<Song>();
+        private List<Song> lovedSongs = new List<Song>();
 
-        /// Зберігає улюблені пісні у файл.
-        private void SaveLovedSongs()
+        private bool suppressInfoPopup = false; // <- Правильне місце
+
+        private void RefreshLovedSongsList()
         {
-            var cleanList = lstLovedSongs.Items.Cast<string>()
-                .Select(item =>
-                {
-                    int dotIndex = item.IndexOf('.');
-                    return dotIndex != -1 ? item.Substring(dotIndex + 1).Trim() : item;
-                });
-            File.WriteAllLines(savePath, cleanList);
-        }
+            lstLovedSongs.Items.Clear();
 
-        /// Завантажує улюблені пісні з файлу.
-        private void LoadLovedSongs()
-        {
-            if (File.Exists(savePath))
+            for (int i = 0; i < lovedSongs.Count; i++)
             {
-                string[] lines = File.ReadAllLines(savePath);
-                lstLovedSongs.Items.Clear();
-                for (int i = 0; i < lines.Length; i++)
-                {
-                    lstLovedSongs.Items.Add($"{i + 1}. {lines[i]}");
-                }
+                // Додаємо текст зі сформованою нумерацією
+                lstLovedSongs.Items.Add($"{i + 1}. {lovedSongs[i]}");
             }
         }
 
-        /// Рядок з'єднання з базою даних SQLite.
-        private string connStr => $"Data Source={dbPath};Version=3;";
 
-        /// Поточні результати пошуку пісень.
-        private List<Song> currentSearchResults = new List<Song>();
 
-        /// Конструктор форми.
         public Form1()
         {
             InitializeComponent();
-
-            this.FormClosing += new FormClosingEventHandler(this.Form1_FormClosing);
+            this.FormClosing += Form1_FormClosing;
+            this.Load += Form1_Load;
+            lstLovedSongs.Click += lstLovedSongs_Click;
 
             this.BackColor = Color.FromArgb(40, 40, 40);
             this.Font = new Font("Segoe UI", 10);
@@ -79,13 +61,54 @@ namespace MelomanGuide
             txtIndexOfSong.ForeColor = Color.White;
         }
 
-        /// Обробник події завантаження форми.
         private void Form1_Load(object sender, EventArgs e)
         {
             LoadLovedSongs();
         }
 
-        /// Створює базу даних та заповнює її, якщо вона порожня.
+        private void lstLovedSongs_Click(object sender, EventArgs e)
+        {
+            if (suppressInfoPopup)
+            {
+                suppressInfoPopup = false;
+                return;
+            }
+
+            int index = lstLovedSongs.SelectedIndex;
+            if (index >= 0 && index < lovedSongs.Count)
+            {
+                var song = lovedSongs[index];
+                MessageBox.Show($"Назва: {song.Title}\nВиконавець: {song.Artist}\nАльбом: {song.Album}",
+                    "Інформація про улюблену пісню", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            }
+        }
+
+        private void LoadLovedSongs()
+        {
+            lovedSongs.Clear();
+            lstLovedSongs.Items.Clear();
+
+            if (File.Exists(savePath))
+            {
+                string[] lines = File.ReadAllLines(savePath);
+                foreach (string line in lines)
+                {
+                    string[] parts = line.Split('|');
+                    if (parts.Length == 3)
+                    {
+                        lovedSongs.Add(new Song { Title = parts[0], Artist = parts[1], Album = parts[2] });
+                    }
+                }
+                RefreshLovedSongsList();
+            }
+        }
+
+        private void SaveLovedSongs()
+        {
+            var lines = lovedSongs.Select(s => $"{s.Title}|{s.Artist}|{s.Album}");
+            File.WriteAllLines(savePath, lines);
+        }
+
         private void InitializeDatabase()
         {
             if (!File.Exists(dbPath))
@@ -96,7 +119,6 @@ namespace MelomanGuide
             using (var conn = new SQLiteConnection(connStr))
             {
                 conn.Open();
-
                 string createTableSql = @"CREATE TABLE IF NOT EXISTS Songs (
                     Id INTEGER PRIMARY KEY AUTOINCREMENT,
                     Title TEXT NOT NULL,
@@ -125,14 +147,12 @@ namespace MelomanGuide
                         {
                             insertCmd.ExecuteNonQuery();
                         }
-
                         MessageBox.Show("Базу даних створено та заповнено!");
                     }
                 }
             }
         }
 
-        /// Виконує локальний пошук пісень за ключовим словом.
         private List<Song> SearchSongsLocal(string query)
         {
             var result = new List<Song>();
@@ -161,7 +181,6 @@ namespace MelomanGuide
             return result;
         }
 
-        /// Виконує онлайн-пошук пісень через Deezer API.
         private async Task<List<Song>> SearchSongsOnline(string keyword)
         {
             var results = new List<Song>();
@@ -190,7 +209,6 @@ namespace MelomanGuide
             return results;
         }
 
-        /// Обробник кнопки "Шукати". Виконує пошук пісень та оновлює інтерфейс.
         private async void Search_Click(object sender, EventArgs e)
         {
             string keyword = txtSearch.Text.Trim();
@@ -204,11 +222,9 @@ namespace MelomanGuide
             }
 
             currentSearchResults = songs;
-
             for (int i = 0; i < songs.Count; i++)
             {
-                var song = songs[i];
-                lstSongs.Items.Add($"{i + 1}. {song}");
+                lstSongs.Items.Add($"{i + 1}. {songs[i]}");
             }
 
             if (songs.Count == 0)
@@ -217,19 +233,6 @@ namespace MelomanGuide
             }
         }
 
-        /// Показує інформацію про вибрану пісню у MessageBox.
-        private void lstSongs_SelectedIndexChanged(object sender, EventArgs e)
-        {
-            int index = lstSongs.SelectedIndex;
-            if (index >= 0 && index < currentSearchResults.Count)
-            {
-                var selected = currentSearchResults[index];
-                MessageBox.Show($"Назва: {selected.Title}\nВиконавець: {selected.Artist}\nАльбом: {selected.Album}",
-                    "Інформація про пісню", MessageBoxButtons.OK, MessageBoxIcon.Information);
-            }
-        }
-
-        /// Додає вибрану пісню до списку улюблених, якщо її там ще немає.
         private void btnAddToLoved_Click(object sender, EventArgs e)
         {
             if (int.TryParse(txtIndexOfSong.Text.Trim(), out int index))
@@ -237,21 +240,10 @@ namespace MelomanGuide
                 if (index >= 1 && index <= currentSearchResults.Count)
                 {
                     var song = currentSearchResults[index - 1];
-
-                    bool alreadyExists = false;
-                    foreach (var item in lstLovedSongs.Items)
+                    if (!lovedSongs.Any(s => s.Title == song.Title && s.Artist == song.Artist && s.Album == song.Album))
                     {
-                        if (item.ToString().Contains(song.ToString()))
-                        {
-                            alreadyExists = true;
-                            break;
-                        }
-                    }
-
-                    if (!alreadyExists)
-                    {
-                        string songText = $"{lstLovedSongs.Items.Count + 1}. {song}";
-                        lstLovedSongs.Items.Add(songText);
+                        lovedSongs.Add(song);
+                        RefreshLovedSongsList();
                         MessageBox.Show("Пісню додано до улюблених!");
                     }
                     else
@@ -270,26 +262,14 @@ namespace MelomanGuide
             }
         }
 
-        /// Видаляє пісню зі списку улюблених за індексом та оновлює номери.
         private void button1_Click(object sender, EventArgs e)
         {
             if (int.TryParse(txtIndexOfLoved.Text.Trim(), out int index))
             {
-                if (index >= 1 && index <= lstLovedSongs.Items.Count)
+                if (index >= 1 && index <= lovedSongs.Count)
                 {
-                    lstLovedSongs.Items.RemoveAt(index - 1);
-
-                    for (int i = 0; i < lstLovedSongs.Items.Count; i++)
-                    {
-                        string itemText = lstLovedSongs.Items[i].ToString();
-                        int dotIndex = itemText.IndexOf('.');
-                        if (dotIndex != -1)
-                        {
-                            itemText = itemText.Substring(dotIndex + 1).Trim();
-                        }
-                        lstLovedSongs.Items[i] = $"{i + 1}. {itemText}";
-                    }
-
+                    lovedSongs.RemoveAt(index - 1);
+                    RefreshLovedSongsList();
                     MessageBox.Show("Пісню видалено зі списку улюблених.");
                 }
                 else
@@ -303,18 +283,9 @@ namespace MelomanGuide
             }
         }
 
-        private void txtIndexOfSong_TextChanged(object sender, EventArgs e) { }
-
-        /// Обробка зміни тексту індексу пісні в списку улюблених.
-        private void txtIndexOfLoved_TextChanged(object sender, EventArgs e)
-        {
-            
-        }
-
-        /// Завантажує улюблені пісні у файл Excel.
         private void downloadToExcel_Click(object sender, EventArgs e)
         {
-            if (lstLovedSongs.Items.Count == 0)
+            if (lovedSongs.Count == 0)
             {
                 MessageBox.Show("Список улюблених пісень порожній.");
                 return;
@@ -324,11 +295,15 @@ namespace MelomanGuide
             excelApp.Workbooks.Add();
             Excel._Worksheet workSheet = (Excel._Worksheet)excelApp.ActiveSheet;
 
-            workSheet.Cells[1, "A"] = "Улюблені пісні";
+            workSheet.Cells[1, "A"] = "Назва";
+            workSheet.Cells[1, "B"] = "Виконавець";
+            workSheet.Cells[1, "C"] = "Альбом";
 
-            for (int i = 0; i < lstLovedSongs.Items.Count; i++)
+            for (int i = 0; i < lovedSongs.Count; i++)
             {
-                workSheet.Cells[i + 2, "A"] = lstLovedSongs.Items[i].ToString();
+                workSheet.Cells[i + 2, "A"] = lovedSongs[i].Title;
+                workSheet.Cells[i + 2, "B"] = lovedSongs[i].Artist;
+                workSheet.Cells[i + 2, "C"] = lovedSongs[i].Album;
             }
 
             SaveFileDialog saveDialog = new SaveFileDialog
@@ -359,10 +334,69 @@ namespace MelomanGuide
             }
         }
 
-        /// Обробник події закриття форми. Зберігає улюблені пісні.
         private void Form1_FormClosing(object sender, FormClosingEventArgs e)
         {
             SaveLovedSongs();
         }
+
+        private void btnUp_Click(object sender, EventArgs e)
+        {
+            if (int.TryParse(txtIndexOfLoved.Text.Trim(), out int userIndex))
+            {
+                int index = userIndex - 1; // перетворюємо в 0-based
+
+                if (index > 0 && index < lovedSongs.Count)
+                {
+                    var temp = lovedSongs[index];
+                    lovedSongs[index] = lovedSongs[index - 1];
+                    lovedSongs[index - 1] = temp;
+
+                    RefreshLovedSongsList();
+                    lstLovedSongs.SelectedIndex = index - 1;
+                    txtIndexOfLoved.Text = (index).ToString(); // оновити текстове поле
+                    SaveLovedSongs();
+                }
+                else
+                {
+                    MessageBox.Show("Неможливо підняти цю пісню вище.");
+                }
+            }
+            else
+            {
+                MessageBox.Show("Введіть коректний номер пісні.");
+            }
+        }
+
+
+        private void btnDown_Click(object sender, EventArgs e)
+        {
+            if (int.TryParse(txtIndexOfLoved.Text.Trim(), out int userIndex))
+            {
+                int index = userIndex - 1;
+
+                if (index >= 0 && index < lovedSongs.Count - 1)
+                {
+                    var temp = lovedSongs[index];
+                    lovedSongs[index] = lovedSongs[index + 1];
+                    lovedSongs[index + 1] = temp;
+
+                    RefreshLovedSongsList();
+                    lstLovedSongs.SelectedIndex = index + 1;
+                    txtIndexOfLoved.Text = (index + 2).ToString();
+                    SaveLovedSongs();
+                }
+                else
+                {
+                    MessageBox.Show("Неможливо опустити цю пісню нижче.");
+                }
+            }
+            else
+            {
+                MessageBox.Show("Введіть коректний номер пісні.");
+            }
+        }
+
     }
 }
+    
+        

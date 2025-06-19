@@ -4,7 +4,7 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 
-namespace MelomanGuide // або твій простір імен
+namespace MelomanGuide 
 {
     public class Song
     {
